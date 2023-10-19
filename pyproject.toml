@@ -11,6 +11,9 @@ python = ">=3.10,<3.13"
 beautifulsoup4 = "^4.12.2"
 numpy = "^1.26.1"
 pandas = "^2.1.1"
+requests = "^2.31.0"
+lxml = "^4.9.3"
+html5lib = "^1.1"
 
 
 [build-system]
