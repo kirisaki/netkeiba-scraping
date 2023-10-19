@@ -47,3 +47,11 @@ def fetch_race(race_id: str) -> pd.DataFrame:
   df['jockey_id'] = jockey_id_list
   df.index = [race_id] * len(df)
   return df
+
+def fetch_horse(horse_id: str) -> pd.DataFrame:
+  url = 'https://db.netkeiba.com/horse/' + horse_id
+  df = pd.read_html(url, encoding='EUC-JP')
+  df = df[4] if df.columns[0] == '受賞歴' else df[3]
+  df = df.rename(columns=lambda x: x.replace(' ', ''))
+  df.index = [horse_id] * len(df)
+  return df
