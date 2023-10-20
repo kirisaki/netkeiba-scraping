@@ -1,22 +1,64 @@
+from time import sleep
 import pandas as pd
 import requests
 import re
 from bs4 import BeautifulSoup
 import pickle
+from datetime import datetime
 
 class Bin:
   url = 'https://db.netkeiba.com/'
   races: pd.DataFrame = pd.DataFrame()
   horses: pd.DataFrame = pd.DataFrame()
   from_year: int
+  output: str
 
   def __init__(self, output: str='./output/data.pickle', from_year: int=2013):
     self.from_year = from_year
+    self.output = output
     try:
       with open(output, 'rb') as f:
         (self.races, self.horses) = pickle.load(f)
     except FileNotFoundError:
       pass
+    print(self.races)
+    self.update()
+
+  def update(self):
+    year = datetime.now().year
+    race_ids = {
+      str(y).zfill(4) + str(p).zfill(2) + str(t).zfill(2) + str(d).zfill(2) + str(r).zfill(2)
+      for y in range(self.from_year, year + 1)
+      for p in range(1, 11)
+      for t in range(1, 7)
+      for d in range(1, 13)
+      for r in range(1, 13)
+    } - set(self.races.index)
+    races = []
+    for id in race_ids:
+      print(id)
+      try:
+        df = self.__fetch_race(id)
+        races.append(df)
+      except IndexError:
+        continue
+      except AttributeError:
+        continue
+    self.races = pd.concat([self.races] + races)
+
+    horse_ids = set(self.races['horse_id']) - set(self.horses.index)
+    horses = []
+    for id in horse_ids:
+      try:
+        df = self.__fetch_horse(id)
+        horses.append(df)
+      except IndexError:
+        continue
+      except AttributeError:
+        continue
+    self.horses = pd.concat([self.horses] + horses)
+    with open(self.output, 'wb') as f:
+      pickle.dump((self.races, self.horses), f)
 
   def __fetch_race(self, race_id: str) -> pd.DataFrame:
     url = self.url + 'race/' + race_id
@@ -25,7 +67,7 @@ class Bin:
     df = pd.read_html(url, encoding='EUC-JP')[0]
     df = df.rename(columns=lambda x: x.replace(' ', ''))
 
-    soup = BeautifulSoup(res.text, 'html.parser')
+    soup = BeautifulSoup(res.text, 'html5lib')
     texts = (
       soup.find('div', attrs={'class': 'data_intro'}).find_all('p')[0].text
       + soup.find('div', attrs={'class': 'data_intro'}).find_all('p')[1].text
@@ -67,10 +109,10 @@ class Bin:
 
   def __fetch_horse(self, horse_id: str) -> pd.DataFrame:
     url = self.url + 'horse/' + horse_id
-    df = pd.read_html(url, encoding='EUC-JP')
-    df = df[4] if df.columns[0] == '受賞歴' else df[3]
+    df = pd.read_html(url, encoding='EUC-JP')[3]
     df = df.rename(columns=lambda x: x.replace(' ', ''))
     df.index = [horse_id] * len(df)
     return df
 
-
+if __name__ == '__main__':
+  data = Bin(from_year=2023)
