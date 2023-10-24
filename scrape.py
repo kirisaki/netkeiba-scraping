@@ -5,11 +5,14 @@ import re
 from bs4 import BeautifulSoup
 import pickle
 from datetime import datetime
+import io
 
 class Bin:
   url = 'https://db.netkeiba.com/'
   races: pd.DataFrame = pd.DataFrame()
   horses: pd.DataFrame = pd.DataFrame()
+  invalid_race_ids: set[str] = set()
+  invalid_horse_ids: set[str] = set()
   from_year: int
   output: str
 
@@ -18,10 +21,9 @@ class Bin:
     self.output = output
     try:
       with open(output, 'rb') as f:
-        (self.races, self.horses) = pickle.load(f)
+        (self.races, self.horses, self.invalid_race_ids, self.invalid_horse_ids) = pickle.load(f)
     except FileNotFoundError:
       pass
-    print(self.races)
     self.update()
 
   def update(self):
@@ -33,38 +35,43 @@ class Bin:
       for t in range(1, 7)
       for d in range(1, 13)
       for r in range(1, 13)
-    } - set(self.races.index)
+    } - set(self.races.index) - self.invalid_race_ids
     races = []
-    for id in race_ids:
+    for id in sorted(list(race_ids)):
       print(id)
       try:
         df = self.__fetch_race(id)
         races.append(df)
       except IndexError:
+        self.invalid_race_ids.add(id)
         continue
       except AttributeError:
+        self.invalid_race_ids.add(id)
         continue
     self.races = pd.concat([self.races] + races)
 
-    horse_ids = set(self.races['horse_id']) - set(self.horses.index)
+    horse_ids = set(self.races['horse_id']) - set(self.horses.index) - self.invalid_horse_ids
     horses = []
-    for id in horse_ids:
+    for id in sorted(list(horse_ids)):
       try:
         df = self.__fetch_horse(id)
         horses.append(df)
       except IndexError:
+        self.invalid_horse_ids.add(id)
         continue
       except AttributeError:
+        self.invalid_horse_ids.add(id)
         continue
     self.horses = pd.concat([self.horses] + horses)
     with open(self.output, 'wb') as f:
-      pickle.dump((self.races, self.horses), f)
+      pickle.dump((self.races, self.horses, self.invalid_race_ids, self.invalid_horse_ids), f)
 
   def __fetch_race(self, race_id: str) -> pd.DataFrame:
     url = self.url + 'race/' + race_id
     res = requests.get(url)
     res.encoding = 'EUC-JP'
-    df = pd.read_html(url, encoding='EUC-JP')[0]
+    f = io.StringIO(res.text)
+    df = pd.read_html(f)[0]
     df = df.rename(columns=lambda x: x.replace(' ', ''))
 
     soup = BeautifulSoup(res.text, 'html5lib')
@@ -109,7 +116,10 @@ class Bin:
 
   def __fetch_horse(self, horse_id: str) -> pd.DataFrame:
     url = self.url + 'horse/' + horse_id
-    df = pd.read_html(url, encoding='EUC-JP')[3]
+    res = requests.get(url)
+    res.encoding = 'EUC-JP'
+    f = io.StringIO(res.text)
+    df = pd.read_html(f)[3]
     df = df.rename(columns=lambda x: x.replace(' ', ''))
     df.index = [horse_id] * len(df)
     return df
