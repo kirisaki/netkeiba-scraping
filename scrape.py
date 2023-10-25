@@ -11,9 +11,7 @@ class Bin:
   url = 'https://db.netkeiba.com/'
   races: pd.DataFrame = pd.DataFrame()
   race_profiles: pd.DataFrame = pd.DataFrame()
-  horses: pd.DataFrame = pd.DataFrame()
   invalid_race_ids: set[str] = set()
-  invalid_horse_ids: set[str] = set()
   from_year: int
   output: str
 
@@ -25,9 +23,7 @@ class Bin:
         data = pickle.load(f)
         self.races = data['races']
         self.race_profiles = data['race_profiles']
-        self.horses = data['horses']
         self.invalid_race_ids = data['invalid_race_ids']
-        self.invalid_horse = data['invalid_horse_ids']
     except FileNotFoundError:
       pass
     self.update()
@@ -44,43 +40,27 @@ class Bin:
     } - set(self.races.index) - self.invalid_race_ids
     races = []
     profiles = []
-    for id in sorted(list(race_ids)):
+    total_races = len(race_ids)
+    for n, id in enumerate(sorted(list(race_ids))):
+      print('{}/{}'.format(str(n), str(total_races)))
       try:
         (race, profile) = self.__fetch_race(id)
-        print('appended: ' + id)
         profiles.append(profile)
         races.append(race)
       except IndexError:
-        print('index error: ' + id)
         self.invalid_race_ids.add(id)
         continue
       except AttributeError:
-        print('attribute error: ' + id)
         self.invalid_race_ids.add(id)
         continue
     self.races = pd.concat([self.races] + races)
     self.race_profiles = pd.concat([self.race_profiles] + profiles)
 
-    horse_ids = set(self.races['horse_id']) - set(self.horses.index) - self.invalid_horse_ids
-    horses = []
-    for id in sorted(list(horse_ids)):
-      try:
-        df = self.__fetch_horse(id)
-        horses.append(df)
-      except IndexError:
-        self.invalid_horse_ids.add(id)
-        continue
-      except AttributeError:
-        self.invalid_horse_ids.add(id)
-        continue
-    self.horses = pd.concat([self.horses] + horses)
     with open(self.output, 'wb') as f:
       pickle.dump({
           'races': self.races,
           'race_profiles': self.race_profiles,
-          'horses': self.horses,
           'invalid_race_ids': self.invalid_race_ids,
-          'invalid_horse_ids': self.invalid_horse_ids
         }, f)
 
   def __fetch_race(self, race_id: str) -> pd.DataFrame:
@@ -134,7 +114,6 @@ class Bin:
     race = pd.read_html(f)[0]
     race.rename(columns=lambda x: x.replace(' ', ''), inplace=True)
     race.drop(columns=['馬名', '騎手', 'ﾀｲﾑ指数', '人気', '調教ﾀｲﾑ', '厩舎ｺﾒﾝﾄ', '備考', '調教師', '馬主'], inplace=True)
-    print(race)
     race.rename(columns={
       '着順': 'order',
       '枠番': 'position',
@@ -144,7 +123,7 @@ class Bin:
       'タイム': 'lap',
       '着差': 'margin',
       '通過': 'order_during_race',
-      '上がり': 'last',
+      '上り': 'last',
       '単勝': 'win_odds',
       '馬体重':'weight',
       '賞金(万円)': 'prise',
@@ -157,6 +136,7 @@ class Bin:
     race['sex'] = race['sex_age'].map(lambda x: x[0])
     race.drop(columns=['sex_age'], inplace=True)
     race['carry'] = race['carry'].map(float)
+    race['last'] = race['last'].map(float)
 
     def parse_lap(x: str) -> float:
       xs = x.split(':')
@@ -164,7 +144,9 @@ class Bin:
     race['lap'] = race['lap'].map(parse_lap)
 
     def parse_margin(x: str) -> float:
-      if x == 'ハナ':
+      if x == '同着':
+        return 0
+      elif x == 'ハナ':
         return 1/16
       elif x == 'アタマ':
         return 1/8
@@ -176,7 +158,7 @@ class Bin:
         return 1/4
       elif x == '3/4':
         return 3/4
-      elif x == '大差':
+      elif x == '大':
         return 11
       else:
         xs = x.split('.')
@@ -186,21 +168,15 @@ class Bin:
           return float(x[0]) + parse_margin(xs[1])
     race['margin'] = race['margin'].fillna('0').map(parse_margin)
 
+    race['order_during_race'] = race['order_during_race'].map(lambda x: x.split('-').map(int))
+    race['win_odds'] = race['win_odds'].map(float)
+    race['weight_diff'] = race['weight'].map(lambda x: int(x.split('(')[1][:-1]))
+    race['weight'] = race['weight'].map(lambda x: int(x.split('(')[0]))
     race['horse_id'] = horse_id_list
     race['jockey_id'] = jockey_id_list
     race.index = [race_id] * len(race)
 
     return (race, profile)
-
-  def __fetch_horse(self, horse_id: str) -> pd.DataFrame:
-    url = self.url + 'horse/' + horse_id
-    res = requests.get(url)
-    res.encoding = 'EUC-JP'
-    f = io.StringIO(res.text)
-    df = pd.read_html(f)[3]
-    df = df.rename(columns=lambda x: x.replace(' ', ''))
-    df.index = [horse_id] * len(df)
-    return df
 
 if __name__ == '__main__':
   data = Bin(from_year=2023)
