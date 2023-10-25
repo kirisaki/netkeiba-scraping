@@ -1,4 +1,3 @@
-from time import sleep
 import pandas as pd
 import requests
 import re
@@ -6,10 +5,12 @@ from bs4 import BeautifulSoup
 import pickle
 from datetime import datetime
 import io
+from decimal import Decimal
 
 class Bin:
   url = 'https://db.netkeiba.com/'
   races: pd.DataFrame = pd.DataFrame()
+  race_profiles: pd.DataFrame = pd.DataFrame()
   horses: pd.DataFrame = pd.DataFrame()
   invalid_race_ids: set[str] = set()
   invalid_horse_ids: set[str] = set()
@@ -21,7 +22,12 @@ class Bin:
     self.output = output
     try:
       with open(output, 'rb') as f:
-        (self.races, self.horses, self.invalid_race_ids, self.invalid_horse_ids) = pickle.load(f)
+        data = pickle.load(f)
+        self.races = data['races']
+        self.race_profiles = data['race_profiles']
+        self.horses = data['horses']
+        self.invalid_race_ids = data['invalid_race_ids']
+        self.invalid_horse = data['invalid_horse_ids']
     except FileNotFoundError:
       pass
     self.update()
@@ -37,18 +43,23 @@ class Bin:
       for r in range(1, 13)
     } - set(self.races.index) - self.invalid_race_ids
     races = []
+    profiles = []
     for id in sorted(list(race_ids)):
-      print(id)
       try:
-        df = self.__fetch_race(id)
-        races.append(df)
+        (race, profile) = self.__fetch_race(id)
+        print('appended: ' + id)
+        profiles.append(profile)
+        races.append(race)
       except IndexError:
+        print('index error: ' + id)
         self.invalid_race_ids.add(id)
         continue
       except AttributeError:
+        print('attribute error: ' + id)
         self.invalid_race_ids.add(id)
         continue
     self.races = pd.concat([self.races] + races)
+    self.race_profiles = pd.concat([self.race_profiles] + profiles)
 
     horse_ids = set(self.races['horse_id']) - set(self.horses.index) - self.invalid_horse_ids
     horses = []
@@ -64,55 +75,122 @@ class Bin:
         continue
     self.horses = pd.concat([self.horses] + horses)
     with open(self.output, 'wb') as f:
-      pickle.dump((self.races, self.horses, self.invalid_race_ids, self.invalid_horse_ids), f)
+      pickle.dump({
+          'races': self.races,
+          'race_profiles': self.race_profiles,
+          'horses': self.horses,
+          'invalid_race_ids': self.invalid_race_ids,
+          'invalid_horse_ids': self.invalid_horse_ids
+        }, f)
 
   def __fetch_race(self, race_id: str) -> pd.DataFrame:
     url = self.url + 'race/' + race_id
     res = requests.get(url)
     res.encoding = 'EUC-JP'
-    f = io.StringIO(res.text)
-    df = pd.read_html(f)[0]
-    df = df.rename(columns=lambda x: x.replace(' ', ''))
+    profile = pd.DataFrame(
+      columns=['race_id', 'title', 'course_type', 'course_length', 'weather', 'going', 'start', 'race_class', 'requirements'])
+    profile.set_index('race_id', inplace=True)
 
+    # build a race profile
+    row = {}
     soup = BeautifulSoup(res.text, 'html5lib')
-    texts = (
-      soup.find('div', attrs={'class': 'data_intro'}).find_all('p')[0].text
-      + soup.find('div', attrs={'class': 'data_intro'}).find_all('p')[1].text
-    )
-    info = re.findall(r'\w+', texts)
-    for text in info:
-      if text in ['芝', 'ダート']:
-        df['race_type'] = [text] * len(df)
-      if '障' in text:
-        df['race_type'] = ['障害'] * len(df)
-      if 'm' in text:
-        df['course_len'] = [int(re.findall(r'\d+', text)[-1])] * len(df)
-      if text in ['良', '稍重', '重', '不良']:
-        df['ground_state'] = [text] * len(df)
-      if text in ['曇', '晴', '雨', '小雨', '小雪', '雪']:
-        df['weather'] = [text] * len(df)
-      if '年' in text:
-        df['date'] = [text] * len(df)
+    data_intro = soup.find('div', attrs={'class': 'data_intro'})
+    row['title'] = data_intro.find('h1').text
+    conds = list(map(lambda x: x.strip(), data_intro.find('diary_snap_cut').find('span').text.split('/')))
+    row['course_type'] = conds[0][0]
+    row['course_length'] = int(conds[0][-4:-1])
+    row['weather'] = conds[1][-1]
+    row['going'] = conds[2][-1]
+    hrs_min = list(map(lambda x: int(x), conds[3][-5:].split(':')))
+    detail = list(map(lambda x: x.strip(), data_intro.find('p', attrs={'class': 'smalltxt'}).text.split()))
+    yy_remain = detail[0].split('年')
+    mm_remain = yy_remain[1].split('月')
+    yy = int(yy_remain[0])
+    mm = int(mm_remain[0])
+    dd = int(mm_remain[1].replace('日', ''))
+    row['start'] = datetime(yy, mm, dd, hrs_min[0], hrs_min[1])
+    row['race_class'] = detail[2]
+    row['requirements'] = detail[3]
+    profile.loc[race_id] = row
 
+    # build a race result
+    result = soup.find('table', attrs={'summary': 'レース結果'})
     horse_id_list = []
-    horse_a_list = soup.find('table', attrs={'summary': 'レース結果'}).find_all(
+    horse_a_list = result.find_all(
       'a', attrs={'href': re.compile('^/horse')}
     )
     for a in horse_a_list:
       horse_id = re.findall(r'\d+', a['href'])
       horse_id_list.append(horse_id[0])
     jockey_id_list = []
-    jockey_a_list = soup.find('table', attrs={'summary': 'レース結果'}).find_all(
+    jockey_a_list = result.find_all(
       'a', attrs={'href': re.compile('^/jockey')}
     )
     for a in jockey_a_list:
       jockey_id = re.findall(r'\d+', a['href'])
       jockey_id_list.append(jockey_id[0])
-    df['horse_id'] = horse_id_list
 
-    df['jockey_id'] = jockey_id_list
-    df.index = [race_id] * len(df)
-    return df
+    f = io.StringIO(result.decode())
+    race = pd.read_html(f)[0]
+    race.rename(columns=lambda x: x.replace(' ', ''), inplace=True)
+    race.drop(columns=['馬名', '騎手', 'ﾀｲﾑ指数', '人気', '調教ﾀｲﾑ', '厩舎ｺﾒﾝﾄ', '備考', '調教師', '馬主'], inplace=True)
+    print(race)
+    race.rename(columns={
+      '着順': 'order',
+      '枠番': 'position',
+      '馬番': 'number',
+      '性齢': 'sex_age',
+      '斤量': 'carry',
+      'タイム': 'lap',
+      '着差': 'margin',
+      '通過': 'order_during_race',
+      '上がり': 'last',
+      '単勝': 'win_odds',
+      '馬体重':'weight',
+      '賞金(万円)': 'prise',
+    }, inplace=True)
+
+    race['carry'] = race['carry'].map(Decimal)
+    race['prise'] = race['prise'].fillna(0).map(Decimal)
+
+    race['age'] = race['sex_age'].map(lambda x: int(x[1:]))
+    race['sex'] = race['sex_age'].map(lambda x: x[0])
+    race.drop(columns=['sex_age'], inplace=True)
+    race['carry'] = race['carry'].map(float)
+
+    def parse_lap(x: str) -> float:
+      xs = x.split(':')
+      return float(xs[0]) * 60.0 + float(xs[1])
+    race['lap'] = race['lap'].map(parse_lap)
+
+    def parse_margin(x: str) -> float:
+      if x == 'ハナ':
+        return 1/16
+      elif x == 'アタマ':
+        return 1/8
+      elif x == 'クビ':
+        return 1/4
+      elif x == '1/2':
+        return 1/2
+      elif x == '1/4':
+        return 1/4
+      elif x == '3/4':
+        return 3/4
+      elif x == '大差':
+        return 11
+      else:
+        xs = x.split('.')
+        if len(xs) == 1:
+          return float(x[0])
+        else:
+          return float(x[0]) + parse_margin(xs[1])
+    race['margin'] = race['margin'].fillna('0').map(parse_margin)
+
+    race['horse_id'] = horse_id_list
+    race['jockey_id'] = jockey_id_list
+    race.index = [race_id] * len(race)
+
+    return (race, profile)
 
   def __fetch_horse(self, horse_id: str) -> pd.DataFrame:
     url = self.url + 'horse/' + horse_id
