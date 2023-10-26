@@ -33,6 +33,7 @@ class Bin:
     self.update()
 
   def update(self):
+    # fetch races
     year = datetime.now().year
     race_ids = {
       str(y).zfill(4) + str(p).zfill(2) + str(t).zfill(2) + str(d).zfill(2) + str(r).zfill(2)
@@ -46,33 +47,49 @@ class Bin:
     profiles = []
     total_races = len(race_ids)
     race_id_list = sorted(list(race_ids))
+    print('')
     for n, id in enumerate(race_id_list):
-      print('race({}): {}/{}'.format(id, str(n), str(total_races)))
+      print('\r' + 'race({}): {}/{}'.format(id, str(n + 1), str(total_races)), end='')
       try:
         (race, profile) = self.__fetch_race(id)
-        profiles.append(profile)
         races.append(race)
+        profiles.append(profile)
       except IndexError:
         self.invalid_race_ids.add(id)
         continue
       except AttributeError:
         self.invalid_race_ids.add(id)
         continue
-      finally:
-        self.races = pd.concat([self.races] + races)
-        self.race_profiles = pd.concat([self.race_profiles] + profiles)
+      else:
+        if n % 100 == 0:
+          self.races = pd.concat([self.races] + races)
+          races = []
+          self.race_profiles = pd.concat([self.race_profiles] + profiles)
+          profiles = []
+          self.save()
+    self.races = pd.concat([self.races] + races)
+    self.race_profiles = pd.concat([self.race_profiles] + profiles)
+    self.save()
+
+    # fetch horses
     horse_ids = set(self.races['horse_id']) - set(self.horses.index)
     horse_id_list = sorted(list(horse_ids))
     total_horses = len(horse_ids)
     horses = []
+    print('')
     for n, id in enumerate(horse_id_list):
-      print('horse({}): {}/{}'.format(id, str(n), str(total_horses)))
+      print('\r' + 'horse({}): {}/{}'.format(id, str(n + 1), str(total_horses)), end='')
       horse = self.__fetch_horse(id)
       horses.append(horse)
+      if n % 100 == 0:
+        self.horses = pd.concat([self.horses] + horses)
+        horses = []
+        self.save()
+
     self.horses = pd.concat([self.horses] + horses)
-    print(self.races)
-    print(self.race_profiles)
-    print(self.horses)
+    self.save()
+
+  def save(self):
     with open(self.output, 'wb') as f:
       pickle.dump({
           'races': self.races,
@@ -95,7 +112,7 @@ class Bin:
     row['title'] = data_intro.find('h1').text
     conds = list(map(lambda x: x.strip(), data_intro.find('diary_snap_cut').find('span').text.split('/')))
     row['course_type'] = conds[0][0]
-    row['course_length'] = int(conds[0][-4:-1])
+    row['course_length'] = int(conds[0][-5:-1])
     row['weather'] = conds[1][-1]
     row['going'] = conds[2][-1]
     hrs_min = list(map(lambda x: int(x), conds[3][-5:].split(':')))
