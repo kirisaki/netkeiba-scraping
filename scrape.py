@@ -205,7 +205,7 @@ class Bin:
           return parse_margin(xs[0]) + parse_margin(xs[1])
     race['margin'] = race['margin'].fillna('0').map(parse_margin)
 
-    race['order_during_race'] = race['order_during_race'].map(lambda x: map(int, x.split('-')))
+    race['order_during_race'] = list(race['order_during_race'].map(lambda x: map(int, x.split('-'))))
     race['win_odds'] = race['win_odds'].map(float)
     race['weight_diff'] = race['weight'].map(lambda x: int(x.split('(')[1][:-1]))
     race['weight'] = race['weight'].map(lambda x: int(x.split('(')[0]))
@@ -227,4 +227,4 @@ class Bin:
     return horse
 
 if __name__ == '__main__':
-  data = Bin(from_year=2023)
+  data = Bin(from_year=2020)
