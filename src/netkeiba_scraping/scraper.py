@@ -1,6 +1,7 @@
 import io
 import json
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -122,8 +123,9 @@ class Scraper:
             except (IndexError, AttributeError):
                 self.invalid_race_ids.add(id)
                 continue
-            else:
-                if n % 100 == 0:
+            finally:
+                time.sleep(0.5)
+            if n % 100 == 0:
                     self.races = pd.concat([self.races] + races)
                     races = []
                     self.race_profiles = pd.concat([self.race_profiles] + profiles)
@@ -148,6 +150,7 @@ class Scraper:
             print('\r' + 'horse({}): {}/{}'.format(id, str(n + 1), str(total_horses)), end='')
             horse = self._fetch_horse(id)
             horses.append(horse)
+            time.sleep(0.5)
             if n % 100 == 0:
                 self.horses = pd.concat([self.horses] + horses)
                 horses = []
@@ -174,11 +177,12 @@ class Scraper:
                 payouts.append(payout)
             except (IndexError, AttributeError):
                 continue
-            else:
-                if n % 100 == 0:
-                    self.payouts = pd.concat([self.payouts] + payouts)
-                    payouts = []
-                    self.save()
+            finally:
+                time.sleep(0.5)
+            if n % 100 == 0 and payouts:
+                self.payouts = pd.concat([self.payouts] + payouts)
+                payouts = []
+                self.save()
 
         self.payouts = pd.concat([self.payouts] + payouts)
         self.save()
