@@ -266,6 +266,9 @@ class Scraper:
             except (ValueError, TypeError):
                 return default
 
+        race['order'] = race['order'].map(lambda x: safe_int(x))
+        race['position'] = race['position'].map(lambda x: safe_int(x))
+        race['number'] = race['number'].map(lambda x: safe_int(x))
         race['carry'] = race['carry'].map(lambda x: safe_float(x))
         race['prise'] = race['prise'].fillna(0).map(lambda x: safe_float(x))
         race['age'] = race['sex_age'].map(lambda x: safe_int(x[1:]) if isinstance(x, str) and len(x) > 1 else 0)
