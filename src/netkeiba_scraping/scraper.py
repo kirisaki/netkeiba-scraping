@@ -497,8 +497,70 @@ class Scraper:
         res.encoding = 'EUC-JP'
 
         soup = BeautifulSoup(res.text, 'html5lib')
-        row = {'name': soup.find('div', attrs={'class': 'horse_title'}).find('h1').text}
+        row = {'name': soup.find('div', attrs={'class': 'horse_title'}).find('h1').text.strip()}
 
-        horse = pd.DataFrame(columns=['name'])
-        horse.loc[horse_id] = row
+        # プロフィールテーブルから情報取得
+        prof_table = soup.find('table', class_='db_prof_table')
+        if prof_table:
+            for tr in prof_table.find_all('tr'):
+                th = tr.find('th')
+                td = tr.find('td')
+                if not th or not td:
+                    continue
+                label = th.get_text(strip=True)
+                if label == '生年月日':
+                    row['birth_date'] = td.get_text(strip=True)
+                elif label == '調教師':
+                    trainer_link = td.find('a')
+                    if trainer_link and trainer_link.get('href'):
+                        match = re.search(r'/trainer/(\d+)/', trainer_link.get('href'))
+                        if match:
+                            row['trainer_id'] = match.group(1)
+                    row['trainer_name'] = td.get_text(strip=True)
+                elif label == '産地':
+                    row['birthplace'] = td.get_text(strip=True)
+
+        # 血統情報をAJAXから取得
+        time.sleep(0.3)
+        ped_url = f'{BASE_URL}horse/ajax_horse_pedigree.html?input=UTF-8&output=json&id={horse_id}'
+        ped_res = requests.get(ped_url, headers=REQUEST_HEADERS)
+        if ped_res.status_code == 200:
+            try:
+                ped_data = ped_res.json()
+                if ped_data.get('status') == 'OK':
+                    ped_html = ped_data.get('data', '')
+                    ped_soup = BeautifulSoup(ped_html, 'html5lib')
+                    blood_table = ped_soup.find('table', class_='blood_table')
+                    if blood_table:
+                        # 父（最初のb_ml rowspan=2）
+                        sire_cell = blood_table.find('td', class_='b_ml')
+                        if sire_cell:
+                            sire_link = sire_cell.find('a')
+                            if sire_link:
+                                row['sire_name'] = sire_link.get_text(strip=True)
+                                href = sire_link.get('href', '')
+                                match = re.search(r'/horse/(?:ped/)?(\w+)/', href)
+                                if match:
+                                    row['sire_id'] = match.group(1)
+
+                        # 母父（母のセルと同じ行にあるb_ml）
+                        dam_cell = blood_table.find('td', class_='b_fml', attrs={'rowspan': '2'})
+                        if dam_cell:
+                            dam_row = dam_cell.find_parent('tr')
+                            if dam_row:
+                                # 母と同じ行にある母父（b_ml）を探す
+                                bms_cell = dam_row.find('td', class_='b_ml')
+                                if bms_cell:
+                                    bms_link = bms_cell.find('a')
+                                    if bms_link:
+                                        row['bms_name'] = bms_link.get_text(strip=True)
+                                        href = bms_link.get('href', '')
+                                        match = re.search(r'/horse/(?:ped/)?(\w+)/', href)
+                                        if match:
+                                            row['bms_id'] = match.group(1)
+            except (ValueError, KeyError):
+                pass
+
+        horse = pd.DataFrame([row])
+        horse.index = [horse_id]
         return horse
