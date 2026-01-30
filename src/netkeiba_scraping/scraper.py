@@ -89,15 +89,17 @@ class Scraper:
         from datetime import date, timedelta
 
         cache_path = self.output_dir / 'race_ids_cache.parquet'
-        race_ids = set()
+        cache_df = None
         last_cached_date = date(self.from_year, 1, 1) - timedelta(days=1)
 
         # キャッシュ読み込み
         if cache_path.exists():
             cache_df = pd.read_parquet(cache_path)
-            race_ids = set(cache_df['race_id'].tolist())
+            # fetched カラムがない場合は追加
+            if 'fetched' not in cache_df.columns:
+                cache_df['fetched'] = False
             last_cached_date = pd.to_datetime(cache_df['fetched_date'].max()).date()
-            print(f'Loaded {len(race_ids)} cached race IDs (until {last_cached_date})')
+            print(f'Loaded {len(cache_df)} cached race IDs (until {last_cached_date})')
 
         # 差分取得
         start_date = last_cached_date + timedelta(days=1)
@@ -112,7 +114,7 @@ class Scraper:
                 print(f'\r  {date_str}', end='')
                 ids = self._fetch_race_ids_by_date(date_str)
                 for race_id in ids:
-                    new_ids.append({'race_id': race_id, 'fetched_date': current})
+                    new_ids.append({'race_id': race_id, 'fetched_date': current, 'fetched': False})
                 current += timedelta(days=1)
                 time.sleep(0.3)
             print(f'\nFound {len(new_ids)} new races')
@@ -120,16 +122,28 @@ class Scraper:
             # キャッシュ更新
             if new_ids:
                 new_df = pd.DataFrame(new_ids)
-                if cache_path.exists():
-                    cache_df = pd.read_parquet(cache_path)
+                if cache_df is not None:
                     cache_df = pd.concat([cache_df, new_df], ignore_index=True)
                 else:
                     cache_df = new_df
-                cache_df.to_parquet(cache_path)
-                race_ids.update(r['race_id'] for r in new_ids)
 
-        # from_year 以降のみ返す
-        return {r for r in race_ids if int(r[:4]) >= self.from_year}
+        # 取得済みレースのフラグを更新
+        if cache_df is not None and not self.race_profiles.empty:
+            fetched_ids = set(self.race_profiles.index)
+            cache_df['fetched'] = cache_df['race_id'].isin(fetched_ids)
+            cache_df.to_parquet(cache_path)
+
+            # 統計表示
+            total = len(cache_df)
+            done = cache_df['fetched'].sum()
+            print(f'Cache: {done}/{total} races fetched')
+
+        # from_year 以降かつ未取得のみ返す
+        if cache_df is None:
+            return set()
+
+        mask = (cache_df['race_id'].str[:4].astype(int) >= self.from_year) & (~cache_df['fetched'])
+        return set(cache_df.loc[mask, 'race_id'].tolist())
 
     def _fetch_race_ids_by_date(self, date_str: str) -> list[str]:
         """特定日のレースID一覧を取得"""
@@ -151,7 +165,7 @@ class Scraper:
         return list(set(race_ids))
 
     def _update_races(self):
-        race_ids = self._fetch_valid_race_ids() - set(self.race_profiles.index)
+        race_ids = self._fetch_valid_race_ids()
 
         races = []
         profiles = []
