@@ -1,5 +1,4 @@
 import io
-import json
 import re
 import time
 from datetime import datetime
@@ -34,7 +33,6 @@ class Scraper:
     horses: pd.DataFrame
     race_profiles: pd.DataFrame
     payouts: pd.DataFrame
-    invalid_race_ids: set[str]
     from_year: int
     output_dir: Path
 
@@ -43,7 +41,6 @@ class Scraper:
         self.horses = pd.DataFrame()
         self.race_profiles = pd.DataFrame()
         self.payouts = pd.DataFrame()
-        self.invalid_race_ids = set()
         self.from_year = from_year
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -66,11 +63,6 @@ class Scraper:
             payouts_path = self.output_dir / 'payouts.parquet'
             if payouts_path.exists():
                 self.payouts = pd.read_parquet(payouts_path)
-
-            invalid_path = self.output_dir / 'invalid_race_ids.json'
-            if invalid_path.exists():
-                with open(invalid_path) as f:
-                    self.invalid_race_ids = set(json.load(f))
         except Exception:
             pass
 
@@ -87,24 +79,53 @@ class Scraper:
         if not self.payouts.empty:
             self.payouts.to_parquet(self.output_dir / 'payouts.parquet')
 
-        with open(self.output_dir / 'invalid_race_ids.json', 'w') as f:
-            json.dump(sorted(self.invalid_race_ids), f)
-
     def update(self):
         self._update_races()
         self._update_payouts()
         self._update_horses()
 
+    def _fetch_valid_race_ids(self) -> set[str]:
+        """開催済みレースのID一覧を取得"""
+        from datetime import date, timedelta
+
+        race_ids = set()
+        start_date = date(self.from_year, 1, 1)
+        end_date = date.today()
+        current = start_date
+
+        print('Fetching race IDs...')
+        while current <= end_date:
+            date_str = current.strftime('%Y%m%d')
+            print(f'\r  {date_str}', end='')
+            ids = self._fetch_race_ids_by_date(date_str)
+            race_ids.update(ids)
+            current += timedelta(days=1)
+            time.sleep(0.3)
+        print(f'\nFound {len(race_ids)} races')
+
+        return race_ids
+
+    def _fetch_race_ids_by_date(self, date_str: str) -> list[str]:
+        """特定日のレースID一覧を取得"""
+        url = f'{BASE_URL}race/list/{date_str}/'
+        res = requests.get(url, headers=REQUEST_HEADERS)
+        res.encoding = 'EUC-JP'
+
+        if res.status_code != 200:
+            return []
+
+        soup = BeautifulSoup(res.text, 'html5lib')
+        race_ids = []
+
+        for link in soup.find_all('a', href=re.compile(r'/race/\d+')):
+            match = re.search(r'/race/(\d+)', link.get('href', ''))
+            if match:
+                race_ids.append(match.group(1))
+
+        return list(set(race_ids))
+
     def _update_races(self):
-        year = datetime.now().year
-        race_ids = {
-            str(y).zfill(4) + str(p).zfill(2) + str(t).zfill(2) + str(d).zfill(2) + str(r).zfill(2)
-            for y in range(self.from_year, year + 1)
-            for p in range(1, 11)
-            for t in range(1, 7)
-            for d in range(1, 13)
-            for r in range(1, 13)
-        } - set(self.race_profiles.index) - self.invalid_race_ids
+        race_ids = self._fetch_valid_race_ids() - set(self.race_profiles.index)
 
         races = []
         profiles = []
@@ -121,7 +142,7 @@ class Scraper:
                 profiles.append(profile)
                 payouts.append(payout)
             except (IndexError, AttributeError):
-                self.invalid_race_ids.add(id)
+                pass
             finally:
                 time.sleep(0.5)
 
