@@ -100,6 +100,19 @@ class Scraper:
                 cache_df['fetched'] = False
             last_cached_date = pd.to_datetime(cache_df['fetched_date'].max()).date()
             print(f'Loaded {len(cache_df)} cached race IDs (until {last_cached_date})')
+        elif not self.race_profiles.empty:
+            # キャッシュがないが race_profiles がある場合、そこから初期化
+            print('Initializing cache from existing race_profiles...')
+            rows = []
+            for race_id in self.race_profiles.index:
+                race_date = self.race_profiles.loc[race_id, 'start']
+                if hasattr(race_date, 'date'):
+                    race_date = race_date.date()
+                rows.append({'race_id': race_id, 'fetched_date': race_date, 'fetched': True})
+            cache_df = pd.DataFrame(rows)
+            last_cached_date = pd.to_datetime(cache_df['fetched_date'].max()).date()
+            cache_df.to_parquet(cache_path)
+            print(f'Initialized cache with {len(cache_df)} races (until {last_cached_date})')
 
         # 差分取得
         start_date = last_cached_date + timedelta(days=1)
