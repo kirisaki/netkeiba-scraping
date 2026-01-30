@@ -149,7 +149,7 @@ class Scraper:
 
         new_ids = []
         from_date = date(self.from_year, 1, 1)
-        end_date = date.today()
+        end_date = date.today() - timedelta(days=1)  # 昨日まで（今日のレースは結果未確定）
 
         # from_year より前のデータがキャッシュにない場合、過去分を取得
         if first_cached_date is None or from_date < first_cached_date:
