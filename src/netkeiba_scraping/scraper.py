@@ -122,21 +122,27 @@ class Scraper:
                 payouts.append(payout)
             except (IndexError, AttributeError):
                 self.invalid_race_ids.add(id)
-                continue
             finally:
                 time.sleep(0.5)
-            if n % 100 == 0:
+
+            if n > 0 and n % 100 == 0:
+                if races:
                     self.races = pd.concat([self.races] + races)
                     races = []
+                if profiles:
                     self.race_profiles = pd.concat([self.race_profiles] + profiles)
                     profiles = []
+                if payouts:
                     self.payouts = pd.concat([self.payouts] + payouts)
                     payouts = []
-                    self.save()
+                self.save()
 
-        self.races = pd.concat([self.races] + races)
-        self.race_profiles = pd.concat([self.race_profiles] + profiles)
-        self.payouts = pd.concat([self.payouts] + payouts)
+        if races:
+            self.races = pd.concat([self.races] + races)
+        if profiles:
+            self.race_profiles = pd.concat([self.race_profiles] + profiles)
+        if payouts:
+            self.payouts = pd.concat([self.payouts] + payouts)
         self.save()
 
     def _update_horses(self):
@@ -148,15 +154,21 @@ class Scraper:
         print('')
         for n, id in enumerate(horse_id_list):
             print('\r' + 'horse({}): {}/{}'.format(id, str(n + 1), str(total_horses)), end='')
-            horse = self._fetch_horse(id)
-            horses.append(horse)
-            time.sleep(0.5)
-            if n % 100 == 0:
+            try:
+                horse = self._fetch_horse(id)
+                horses.append(horse)
+            except (IndexError, AttributeError):
+                pass
+            finally:
+                time.sleep(0.5)
+
+            if n > 0 and n % 100 == 0 and horses:
                 self.horses = pd.concat([self.horses] + horses)
                 horses = []
                 self.save()
 
-        self.horses = pd.concat([self.horses] + horses)
+        if horses:
+            self.horses = pd.concat([self.horses] + horses)
         self.save()
 
     def _update_payouts(self):
@@ -176,15 +188,17 @@ class Scraper:
                 payout = self._fetch_payouts(race_id)
                 payouts.append(payout)
             except (IndexError, AttributeError):
-                continue
+                pass
             finally:
                 time.sleep(0.5)
-            if n % 100 == 0 and payouts:
+
+            if n > 0 and n % 100 == 0 and payouts:
                 self.payouts = pd.concat([self.payouts] + payouts)
                 payouts = []
                 self.save()
 
-        self.payouts = pd.concat([self.payouts] + payouts)
+        if payouts:
+            self.payouts = pd.concat([self.payouts] + payouts)
         self.save()
 
     def _fetch_payouts(self, race_id: str) -> pd.DataFrame:
