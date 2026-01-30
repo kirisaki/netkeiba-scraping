@@ -90,7 +90,8 @@ class Scraper:
 
         cache_path = self.output_dir / 'race_ids_cache.parquet'
         cache_df = None
-        last_cached_date = date(self.from_year, 1, 1) - timedelta(days=1)
+        first_cached_date = None
+        last_cached_date = None
 
         # キャッシュ読み込み
         if cache_path.exists():
@@ -98,8 +99,9 @@ class Scraper:
             # fetched カラムがない場合は追加
             if 'fetched' not in cache_df.columns:
                 cache_df['fetched'] = False
+            first_cached_date = pd.to_datetime(cache_df['fetched_date'].min()).date()
             last_cached_date = pd.to_datetime(cache_df['fetched_date'].max()).date()
-            print(f'Loaded {len(cache_df)} cached race IDs (until {last_cached_date})')
+            print(f'Loaded {len(cache_df)} cached race IDs ({first_cached_date} ~ {last_cached_date})')
         elif not self.race_profiles.empty:
             # キャッシュがないが race_profiles がある場合、そこから初期化
             print('Initializing cache from existing race_profiles...')
@@ -110,18 +112,35 @@ class Scraper:
                     race_date = race_date.date()
                 rows.append({'race_id': race_id, 'fetched_date': race_date, 'fetched': True})
             cache_df = pd.DataFrame(rows)
+            first_cached_date = pd.to_datetime(cache_df['fetched_date'].min()).date()
             last_cached_date = pd.to_datetime(cache_df['fetched_date'].max()).date()
             cache_df.to_parquet(cache_path)
-            print(f'Initialized cache with {len(cache_df)} races (until {last_cached_date})')
+            print(f'Initialized cache with {len(cache_df)} races ({first_cached_date} ~ {last_cached_date})')
 
-        # 差分取得
-        start_date = last_cached_date + timedelta(days=1)
+        new_ids = []
+        from_date = date(self.from_year, 1, 1)
         end_date = date.today()
 
-        if start_date <= end_date:
-            print('Fetching new race IDs...')
+        # from_year より前のデータがキャッシュにない場合、過去分を取得
+        if first_cached_date is None or from_date < first_cached_date:
+            fetch_until = (first_cached_date - timedelta(days=1)) if first_cached_date else end_date
+            print(f'Fetching past race IDs ({from_date} ~ {fetch_until})...')
+            current = from_date
+            while current <= fetch_until:
+                date_str = current.strftime('%Y%m%d')
+                print(f'\r  {date_str}', end='')
+                ids = self._fetch_race_ids_by_date(date_str)
+                for race_id in ids:
+                    new_ids.append({'race_id': race_id, 'fetched_date': current, 'fetched': False})
+                current += timedelta(days=1)
+                time.sleep(0.3)
+            print()
+
+        # キャッシュの最終日以降を取得
+        if last_cached_date and last_cached_date < end_date:
+            start_date = last_cached_date + timedelta(days=1)
+            print(f'Fetching new race IDs ({start_date} ~ {end_date})...')
             current = start_date
-            new_ids = []
             while current <= end_date:
                 date_str = current.strftime('%Y%m%d')
                 print(f'\r  {date_str}', end='')
