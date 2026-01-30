@@ -85,25 +85,51 @@ class Scraper:
         self._update_horses()
 
     def _fetch_valid_race_ids(self) -> set[str]:
-        """開催済みレースのID一覧を取得"""
+        """開催済みレースのID一覧を取得（キャッシュ付き）"""
         from datetime import date, timedelta
 
+        cache_path = self.output_dir / 'race_ids_cache.parquet'
         race_ids = set()
-        start_date = date(self.from_year, 1, 1)
+        last_cached_date = date(self.from_year, 1, 1) - timedelta(days=1)
+
+        # キャッシュ読み込み
+        if cache_path.exists():
+            cache_df = pd.read_parquet(cache_path)
+            race_ids = set(cache_df['race_id'].tolist())
+            last_cached_date = pd.to_datetime(cache_df['fetched_date'].max()).date()
+            print(f'Loaded {len(race_ids)} cached race IDs (until {last_cached_date})')
+
+        # 差分取得
+        start_date = last_cached_date + timedelta(days=1)
         end_date = date.today()
-        current = start_date
 
-        print('Fetching race IDs...')
-        while current <= end_date:
-            date_str = current.strftime('%Y%m%d')
-            print(f'\r  {date_str}', end='')
-            ids = self._fetch_race_ids_by_date(date_str)
-            race_ids.update(ids)
-            current += timedelta(days=1)
-            time.sleep(0.3)
-        print(f'\nFound {len(race_ids)} races')
+        if start_date <= end_date:
+            print('Fetching new race IDs...')
+            current = start_date
+            new_ids = []
+            while current <= end_date:
+                date_str = current.strftime('%Y%m%d')
+                print(f'\r  {date_str}', end='')
+                ids = self._fetch_race_ids_by_date(date_str)
+                for race_id in ids:
+                    new_ids.append({'race_id': race_id, 'fetched_date': current})
+                current += timedelta(days=1)
+                time.sleep(0.3)
+            print(f'\nFound {len(new_ids)} new races')
 
-        return race_ids
+            # キャッシュ更新
+            if new_ids:
+                new_df = pd.DataFrame(new_ids)
+                if cache_path.exists():
+                    cache_df = pd.read_parquet(cache_path)
+                    cache_df = pd.concat([cache_df, new_df], ignore_index=True)
+                else:
+                    cache_df = new_df
+                cache_df.to_parquet(cache_path)
+                race_ids.update(r['race_id'] for r in new_ids)
+
+        # from_year 以降のみ返す
+        return {r for r in race_ids if int(r[:4]) >= self.from_year}
 
     def _fetch_race_ids_by_date(self, date_str: str) -> list[str]:
         """特定日のレースID一覧を取得"""
