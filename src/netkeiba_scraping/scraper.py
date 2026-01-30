@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from requests.exceptions import ConnectionError, Timeout, RequestException
 
 from .parsers import parse_lap, parse_margin
 
@@ -15,6 +16,35 @@ BASE_URL = 'https://db.netkeiba.com/'
 REQUEST_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 }
+
+# リトライ設定
+MAX_RETRIES = 3
+RETRY_DELAY = 5  # 秒
+RATE_LIMIT_DELAY = 30  # 400エラー時の追加待機
+
+
+def fetch_with_retry(url: str, max_retries: int = MAX_RETRIES) -> requests.Response | None:
+    """リトライ付きでHTTPリクエストを実行"""
+    for attempt in range(max_retries):
+        try:
+            res = requests.get(url, headers=REQUEST_HEADERS, timeout=30)
+            if res.status_code == 200:
+                res.encoding = 'EUC-JP'
+                return res
+            elif res.status_code == 400:
+                # レート制限の可能性 - 長めに待機
+                print(f'\n  [WARN] 400 error, waiting {RATE_LIMIT_DELAY}s...')
+                time.sleep(RATE_LIMIT_DELAY)
+            else:
+                print(f'\n  [WARN] HTTP {res.status_code}')
+                time.sleep(RETRY_DELAY)
+        except (ConnectionError, Timeout) as e:
+            print(f'\n  [WARN] Network error (attempt {attempt + 1}/{max_retries}): {e}')
+            time.sleep(RETRY_DELAY * (attempt + 1))  # 指数バックオフ
+        except RequestException as e:
+            print(f'\n  [ERROR] Request failed: {e}')
+            return None
+    return None
 
 BET_TYPE_MAP = {
     '単勝': 'win',
@@ -180,10 +210,8 @@ class Scraper:
     def _fetch_race_ids_by_date(self, date_str: str) -> list[str]:
         """特定日のレースID一覧を取得"""
         url = f'{BASE_URL}race/list/{date_str}/'
-        res = requests.get(url, headers=REQUEST_HEADERS)
-        res.encoding = 'EUC-JP'
-
-        if res.status_code != 200:
+        res = fetch_with_retry(url)
+        if not res:
             return []
 
         soup = BeautifulSoup(res.text, 'html5lib')
@@ -205,18 +233,28 @@ class Scraper:
         total_races = len(race_ids)
         race_id_list = sorted(list(race_ids))
 
+        # 統計
+        success_count = 0
+        error_count = 0
+
         print('')
         for n, id in enumerate(race_id_list):
-            print('\r' + 'race({}): {}/{}'.format(id, str(n + 1), str(total_races)), end='')
+            print('\r' + 'race({}): {}/{} (ok:{}, err:{})'.format(
+                id, str(n + 1), str(total_races), success_count, error_count), end='')
             try:
-                (race, profile, payout) = self._fetch_race(id)
-                races.append(race)
-                profiles.append(profile)
-                payouts.append(payout)
-            except (IndexError, AttributeError, ValueError):
-                pass
+                result = self._fetch_race(id)
+                if result:
+                    (race, profile, payout) = result
+                    races.append(race)
+                    profiles.append(profile)
+                    payouts.append(payout)
+                    success_count += 1
+                else:
+                    error_count += 1
+            except (IndexError, AttributeError, ValueError) as e:
+                error_count += 1
             finally:
-                time.sleep(0.5)
+                time.sleep(1.0)  # レート制限対策で増加
 
             if n > 0 and n % 100 == 0:
                 if races:
@@ -237,6 +275,7 @@ class Scraper:
         if payouts:
             self.payouts = pd.concat([self.payouts] + payouts)
         self.save()
+        print(f'\nRaces: {success_count} ok, {error_count} errors')
 
     def _update_horses(self):
         horse_ids = set(self.races['horse_id']) - set(self.horses.index)
@@ -244,16 +283,25 @@ class Scraper:
         total_horses = len(horse_ids)
         horses = []
 
+        # 統計
+        success_count = 0
+        error_count = 0
+
         print('')
         for n, id in enumerate(horse_id_list):
-            print('\r' + 'horse({}): {}/{}'.format(id, str(n + 1), str(total_horses)), end='')
+            print('\r' + 'horse({}): {}/{} (ok:{}, err:{})'.format(
+                id, str(n + 1), str(total_horses), success_count, error_count), end='')
             try:
                 horse = self._fetch_horse(id)
-                horses.append(horse)
+                if horse is not None:
+                    horses.append(horse)
+                    success_count += 1
+                else:
+                    error_count += 1
             except (IndexError, AttributeError, ValueError):
-                pass
+                error_count += 1
             finally:
-                time.sleep(0.5)
+                time.sleep(1.0)
 
             if n > 0 and n % 100 == 0 and horses:
                 self.horses = pd.concat([self.horses] + horses)
@@ -263,6 +311,7 @@ class Scraper:
         if horses:
             self.horses = pd.concat([self.horses] + horses)
         self.save()
+        print(f'\nHorses: {success_count} ok, {error_count} errors')
 
     def _update_payouts(self):
         existing_payout_race_ids = set(self.payouts['race_id'].unique()) if not self.payouts.empty else set()
@@ -294,21 +343,19 @@ class Scraper:
             self.payouts = pd.concat([self.payouts] + payouts)
         self.save()
 
-    def _fetch_payouts(self, race_id: str) -> pd.DataFrame:
+    def _fetch_payouts(self, race_id: str) -> pd.DataFrame | None:
         url = BASE_URL + 'race/' + race_id
-        res = requests.get(url, headers=REQUEST_HEADERS)
-        if res.status_code != 200:
-            raise ValueError(f'HTTP {res.status_code} for {race_id}')
-        res.encoding = 'EUC-JP'
+        res = fetch_with_retry(url)
+        if not res:
+            return None
         soup = BeautifulSoup(res.text, 'html5lib')
         return self._parse_payouts(soup, race_id)
 
-    def _fetch_race(self, race_id: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    def _fetch_race(self, race_id: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame] | None:
         url = BASE_URL + 'race/' + race_id
-        res = requests.get(url, headers=REQUEST_HEADERS)
-        if res.status_code != 200:
-            raise ValueError(f'HTTP {res.status_code} for {race_id}')
-        res.encoding = 'EUC-JP'
+        res = fetch_with_retry(url)
+        if not res:
+            return None
 
         profile = pd.DataFrame(
             columns=['title', 'course_type', 'course_length', 'weather', 'going', 'start', 'race_class', 'requirements']
@@ -489,12 +536,11 @@ class Scraper:
                 numbers.append(int(part))
         return numbers
 
-    def _fetch_horse(self, horse_id: str) -> pd.DataFrame:
+    def _fetch_horse(self, horse_id: str) -> pd.DataFrame | None:
         url = BASE_URL + 'horse/' + horse_id
-        res = requests.get(url, headers=REQUEST_HEADERS)
-        if res.status_code != 200:
-            raise ValueError(f'HTTP {res.status_code} for horse {horse_id}')
-        res.encoding = 'EUC-JP'
+        res = fetch_with_retry(url)
+        if not res:
+            return None
 
         soup = BeautifulSoup(res.text, 'html5lib')
         row = {'name': soup.find('div', attrs={'class': 'horse_title'}).find('h1').text.strip()}
@@ -520,11 +566,19 @@ class Scraper:
                 elif label == '産地':
                     row['birthplace'] = td.get_text(strip=True)
 
-        # 血統情報をAJAXから取得
-        time.sleep(0.3)
+        # 血統情報をAJAXから取得（リトライ付き）
+        time.sleep(0.5)
         ped_url = f'{BASE_URL}horse/ajax_horse_pedigree.html?input=UTF-8&output=json&id={horse_id}'
-        ped_res = requests.get(ped_url, headers=REQUEST_HEADERS)
-        if ped_res.status_code == 200:
+        ped_res = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                ped_res = requests.get(ped_url, headers=REQUEST_HEADERS, timeout=30)
+                if ped_res.status_code == 200:
+                    break
+                time.sleep(RETRY_DELAY)
+            except (ConnectionError, Timeout):
+                time.sleep(RETRY_DELAY * (attempt + 1))
+        if ped_res and ped_res.status_code == 200:
             try:
                 ped_data = ped_res.json()
                 if ped_data.get('status') == 'OK':
