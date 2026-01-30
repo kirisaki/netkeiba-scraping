@@ -1,22 +1,27 @@
-[tool.poetry]
+[project]
 name = "netkeiba-scraping"
 version = "0.1.0"
 description = ""
-authors = ["Akihito KIRISAKI <kirisaki@klara.works>"]
+authors = [{ name = "Akihito KIRISAKI", email = "kirisaki@klara.works" }]
 readme = "README.md"
-packages = [{include = "netkeiba_scraping"}]
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "beautifulsoup4>=4.12.2",
+    "numpy>=1.26.1",
+    "pandas>=2.1.1",
+    "pyarrow>=14.0.0",
+    "requests>=2.31.0",
+    "lxml>=4.9.3",
+    "html5lib>=1.1",
+    "matplotlib>=3.8.0",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.10,<3.13"
-beautifulsoup4 = "^4.12.2"
-numpy = "^1.26.1"
-pandas = "^2.1.1"
-requests = "^2.31.0"
-lxml = "^4.9.3"
-html5lib = "^1.1"
-matplotlib = "^3.8.0"
-
+[project.scripts]
+netkeiba-scraping = "netkeiba_scraping.__main__:main"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/netkeiba_scraping"]
