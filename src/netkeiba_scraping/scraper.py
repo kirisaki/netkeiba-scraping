@@ -194,7 +194,7 @@ class Scraper:
                 races.append(race)
                 profiles.append(profile)
                 payouts.append(payout)
-            except (IndexError, AttributeError):
+            except (IndexError, AttributeError, ValueError):
                 pass
             finally:
                 time.sleep(0.5)
@@ -231,7 +231,7 @@ class Scraper:
             try:
                 horse = self._fetch_horse(id)
                 horses.append(horse)
-            except (IndexError, AttributeError):
+            except (IndexError, AttributeError, ValueError):
                 pass
             finally:
                 time.sleep(0.5)
@@ -261,7 +261,7 @@ class Scraper:
             try:
                 payout = self._fetch_payouts(race_id)
                 payouts.append(payout)
-            except (IndexError, AttributeError):
+            except (IndexError, AttributeError, ValueError):
                 pass
             finally:
                 time.sleep(0.5)
@@ -278,6 +278,8 @@ class Scraper:
     def _fetch_payouts(self, race_id: str) -> pd.DataFrame:
         url = BASE_URL + 'race/' + race_id
         res = requests.get(url, headers=REQUEST_HEADERS)
+        if res.status_code != 200:
+            raise ValueError(f'HTTP {res.status_code} for {race_id}')
         res.encoding = 'EUC-JP'
         soup = BeautifulSoup(res.text, 'html5lib')
         return self._parse_payouts(soup, race_id)
@@ -285,6 +287,8 @@ class Scraper:
     def _fetch_race(self, race_id: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         url = BASE_URL + 'race/' + race_id
         res = requests.get(url, headers=REQUEST_HEADERS)
+        if res.status_code != 200:
+            raise ValueError(f'HTTP {res.status_code} for {race_id}')
         res.encoding = 'EUC-JP'
 
         profile = pd.DataFrame(
@@ -469,6 +473,8 @@ class Scraper:
     def _fetch_horse(self, horse_id: str) -> pd.DataFrame:
         url = BASE_URL + 'horse/' + horse_id
         res = requests.get(url, headers=REQUEST_HEADERS)
+        if res.status_code != 200:
+            raise ValueError(f'HTTP {res.status_code} for horse {horse_id}')
         res.encoding = 'EUC-JP'
 
         soup = BeautifulSoup(res.text, 'html5lib')
