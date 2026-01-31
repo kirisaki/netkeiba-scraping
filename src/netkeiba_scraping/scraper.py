@@ -383,7 +383,9 @@ class Scraper:
         row['title'] = data_intro.find('h1').text
         conds = list(map(lambda x: x.strip(), data_intro.find('diary_snap_cut').find('span').text.split('/')))
         row['course_type'] = conds[0][0] if conds[0] else ''
-        row['course_length'] = int(conds[0][-5:-1]) if len(conds[0]) >= 5 else 0
+        # 距離は正規表現で数字を抽出（850m〜3600m対応）
+        length_match = re.search(r'\d+', conds[0]) if conds[0] else None
+        row['course_length'] = int(length_match.group()) if length_match else 0
         # 天候・馬場は "天候 : 晴" 形式から値を抽出
         row['weather'] = conds[1].split(':')[-1].strip() if len(conds) > 1 and ':' in conds[1] else ''
         row['going'] = conds[2].split(':')[-1].strip() if len(conds) > 2 and ':' in conds[2] else ''
