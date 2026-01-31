@@ -382,10 +382,11 @@ class Scraper:
         row = {}
         row['title'] = data_intro.find('h1').text
         conds = list(map(lambda x: x.strip(), data_intro.find('diary_snap_cut').find('span').text.split('/')))
-        row['course_type'] = conds[0][0]
-        row['course_length'] = int(conds[0][-5:-1])
-        row['weather'] = conds[1][-1]
-        row['going'] = conds[2][-1]
+        row['course_type'] = conds[0][0] if conds[0] else ''
+        row['course_length'] = int(conds[0][-5:-1]) if len(conds[0]) >= 5 else 0
+        # 天候・馬場は "天候 : 晴" 形式から値を抽出
+        row['weather'] = conds[1].split(':')[-1].strip() if len(conds) > 1 and ':' in conds[1] else ''
+        row['going'] = conds[2].split(':')[-1].strip() if len(conds) > 2 and ':' in conds[2] else ''
         hrs_min = list(map(lambda x: int(x), conds[3][-5:].split(':')))
         detail = list(map(lambda x: x.strip(), data_intro.find('p', attrs={'class': 'smalltxt'}).text.split()))
         yy_remain = detail[0].split('年')
