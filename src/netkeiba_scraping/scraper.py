@@ -380,8 +380,8 @@ class Scraper:
         mm = int(mm_remain[0])
         dd = int(mm_remain[1].replace('日', ''))
         row['start'] = datetime(yy, mm, dd, hrs_min[0], hrs_min[1])
-        row['race_class'] = detail[2]
-        row['requirements'] = detail[3]
+        row['race_class'] = detail[2] if len(detail) > 2 else ''
+        row['requirements'] = detail[3] if len(detail) > 3 else ''  # 地方競馬は要素が少ない
         profile.loc[race_id] = row
 
         # レース結果を構築
