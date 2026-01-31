@@ -237,6 +237,9 @@ class Scraper:
         success_count = 0
         error_count = 0
 
+        # エラーログファイル
+        error_log_path = self.output_dir / 'errors.log'
+
         print('')
         for n, id in enumerate(race_id_list):
             print('\r' + 'race({}): {}/{} (ok:{}, err:{})'.format(
@@ -251,8 +254,12 @@ class Scraper:
                     success_count += 1
                 else:
                     error_count += 1
+                    with open(error_log_path, 'a') as f:
+                        f.write(f'{datetime.now()}\trace\t{id}\tfetch_failed\n')
             except (IndexError, AttributeError, ValueError) as e:
                 error_count += 1
+                with open(error_log_path, 'a') as f:
+                    f.write(f'{datetime.now()}\trace\t{id}\t{type(e).__name__}: {e}\n')
             finally:
                 time.sleep(1.0)  # レート制限対策で増加
 
@@ -287,6 +294,9 @@ class Scraper:
         success_count = 0
         error_count = 0
 
+        # エラーログファイル
+        error_log_path = self.output_dir / 'errors.log'
+
         print('')
         for n, id in enumerate(horse_id_list):
             print('\r' + 'horse({}): {}/{} (ok:{}, err:{})'.format(
@@ -298,8 +308,12 @@ class Scraper:
                     success_count += 1
                 else:
                     error_count += 1
-            except (IndexError, AttributeError, ValueError):
+                    with open(error_log_path, 'a') as f:
+                        f.write(f'{datetime.now()}\thorse\t{id}\tfetch_failed\n')
+            except (IndexError, AttributeError, ValueError) as e:
                 error_count += 1
+                with open(error_log_path, 'a') as f:
+                    f.write(f'{datetime.now()}\thorse\t{id}\t{type(e).__name__}: {e}\n')
             finally:
                 time.sleep(1.0)
 
